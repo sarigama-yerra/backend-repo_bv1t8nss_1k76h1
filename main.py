@@ -1,8 +1,13 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List
 
-app = FastAPI()
+from database import db, create_document, get_documents
+from schemas import BlogPost, ContactMessage
+
+app = FastAPI(title="Event SaaS API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -14,7 +19,7 @@ app.add_middleware(
 
 @app.get("/")
 def read_root():
-    return {"message": "Hello from FastAPI Backend!"}
+    return {"message": "Event SaaS API is running"}
 
 @app.get("/api/hello")
 def hello():
@@ -33,36 +38,53 @@ def test_database():
     }
     
     try:
-        # Try to import database module
-        from database import db
-        
         if db is not None:
             response["database"] = "✅ Available"
             response["database_url"] = "✅ Configured"
             response["database_name"] = db.name if hasattr(db, 'name') else "✅ Connected"
             response["connection_status"] = "Connected"
-            
-            # Try to list collections to verify connectivity
             try:
                 collections = db.list_collection_names()
-                response["collections"] = collections[:10]  # Show first 10 collections
+                response["collections"] = collections[:10]
                 response["database"] = "✅ Connected & Working"
             except Exception as e:
                 response["database"] = f"⚠️  Connected but Error: {str(e)[:50]}"
         else:
             response["database"] = "⚠️  Available but not initialized"
             
-    except ImportError:
-        response["database"] = "❌ Database module not found (run enable-database first)"
     except Exception as e:
         response["database"] = f"❌ Error: {str(e)[:50]}"
     
-    # Check environment variables
     import os
     response["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
     
     return response
+
+# Marketing blog endpoints
+@app.get("/api/blogs", response_model=List[BlogPost])
+def list_blogs(limit: int = 12):
+    try:
+        docs = get_documents("blogpost", limit=limit)
+        out: List[BlogPost] = []
+        for d in docs:
+            # remove mongo _id and timestamps if present
+            d.pop("_id", None)
+            d.pop("created_at", None)
+            d.pop("updated_at", None)
+            out.append(BlogPost(**d))
+        return out
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Contact form endpoint
+@app.post("/api/contact")
+def submit_contact(msg: ContactMessage):
+    try:
+        inserted_id = create_document("contactmessage", msg)
+        return {"status": "ok", "id": inserted_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
